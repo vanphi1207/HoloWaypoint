@@ -1,0 +1,73 @@
+# Marker is clamped to this many blocks from the player's eyes when the
+# target is further away (keep below the server's entity tracking range).
+max-render-distance: 24.0
+
+# Height above the waypoint where the icon floats.
+marker-height: 1.5
+
+# Auto-untrack when the player gets this close.
+arrive-distance: 2.0
+
+# How often markers are refreshed (ticks). 1 keeps the edge marker smooth.
+update-interval-ticks: 1
+
+# --- Interpolation ----------------------------------------------------------
+# Number of ticks the client uses to glide a marker (position and scale) between
+# two updates instead of snapping. 0 = automatic (matches update-interval-ticks),
+# max 59. Raise to 2-3 for extra smoothness at the cost of a little latency.
+interpolation-ticks: 0
+
+# --- Screen-edge indicator -------------------------------------------------
+# When the target is off-screen the marker is pinned to the screen border and
+# slides around it, pointing the way. Plugins cannot draw real HUD, so this is
+# emulated with a hologram a few blocks in front of the camera.
+edge-indicator: true
+
+# How far in front of the camera the edge marker floats (blocks).
+edge-distance: 3.0
+
+# Follow speed for an off-screen marker, in response units per second.
+# Higher values follow faster; 0 disables smoothing.
+edge-smoothing-speed: 12.0
+
+# How many ticks ahead the camera (position + look direction) is predicted for the
+# off-screen marker. Compensates the one-tick lag between the server and the
+# player's camera. 0 disables prediction; try 0.5-2.0 if it overshoots or lags.
+edge-lookahead-ticks: 1.0
+
+# Half size of the "screen" rectangle, in tangent units (offset / depth).
+# Lower values keep the marker further inside the screen; raise them if it
+# sits too far from the border. Depends on the player's FOV and window ratio.
+edge-half-width: 1.0
+edge-half-height: 0.55
+
+# Marker size while on the edge.
+edge-scale: 0.7
+
+# Draw a directional arrow while the marker is on the edge.
+# Uses Unicode characters and does not require a resource pack.
+edge-arrow: true
+
+# --- Resource pack -----------------------------------------------------------
+# The icon font (holowaypoint:icons) lives in the HoloWaypoint resource pack.
+resource-pack:
+  # none     : do not send any pack, markers use Unicode icons.
+  # self     : this plugin sends plugins/HoloWaypoint/resourcepack.zip itself.
+  #            Requires a public HTTP(S) `url` that hosts the same zip.
+  # external : another plugin (Nexo, ItemsAdder, Oraxen...) hosts and sends the pack.
+  #            Copy the pack into that plugin (for Nexo: put the zip or the folder into
+  #            plugins/Nexo/pack/external_packs/, then run /nexo reload all).
+  #            HoloWaypoint sends nothing; it only watches which packs a player loaded.
+  mode: external
+
+  # auto    : use the icon font once the player loaded a pack (see mode above),
+  #           otherwise fall back to Unicode.
+  # force   : always use the icon font (use this if auto cannot tell, e.g. the pack
+  #           is sent by a proxy or another server in the network).
+  # unicode : never use the icon font.
+  icon-mode: auto
+
+  # Only used by mode: self.
+  url: ""
+  required: false
+  prompt: "Tải resource pack HoloWaypoint để hiển thị icon waypoint."
