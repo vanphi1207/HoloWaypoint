@@ -1,25 +1,20 @@
 package dev.para.holowaypoint.resourcepack;
 
-import net.kyori.adventure.text.Component;
-import org.bukkit.Bukkit;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
-import org.bukkit.event.player.PlayerJoinEvent;
-import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerResourcePackStatusEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -27,132 +22,73 @@ import java.util.UUID;
 
 public final class ResourcePackService implements Listener {
 
-    public enum Mode { NONE, SELF, EXTERNAL }
-
-    private static final UUID PACK_ID = UUID.nameUUIDFromBytes(
-            "dev.para.holowaypoint:resourcepack".getBytes(StandardCharsets.UTF_8));
-
-    private static final long QUIT_CLEANUP_TICKS = 20L * 60L;
+    private static final List<HostProvider> HOST_PROVIDERS = List.of(
+            new HostProvider("nexo", "Nexo"),
+            new HostProvider("itemsadder", "ItemsAdder"),
+            new HostProvider("oraxen", "Oraxen"));
 
     private final JavaPlugin plugin;
+    private final File knownPacksFile;
 
-    private final Map<UUID, Set<UUID>> loadedPacks = new HashMap<>();
-    private final Map<UUID, String> requestedPacks = new HashMap<>();
+    private final Map<UUID, Map<String, Set<UUID>>> loadedPacks = new HashMap<>();
 
-    private byte[] packHash;
-    private boolean hashPrepared;
-    private boolean warnedMissingUrl;
-    private String warnedInvalidUrl;
-    private String warnedIconMode;
-    private String warnedMode;
+    private boolean warnedMissingHost;
+    private String warnedInvalidHost;
+    private boolean warnedLegacyMode;
 
     public ResourcePackService(JavaPlugin plugin) {
         this.plugin = plugin;
+        this.knownPacksFile = new File(plugin.getDataFolder(), "resource-packs.yml");
+        loadKnownPacks();
+        warnAboutLegacyMode();
     }
 
-    public Mode mode() {
-        FileConfiguration config = plugin.getConfig();
-        String raw = config.getString("resource-pack.mode");
-        if (raw == null || raw.isBlank()) {
-            return config.getBoolean("resource-pack.enabled", false) ? Mode.SELF : Mode.NONE;
-        }
-        return switch (raw.trim().toLowerCase(Locale.ROOT)) {
-            case "none" -> Mode.NONE;
-            case "self" -> Mode.SELF;
-            case "external" -> Mode.EXTERNAL;
-            default -> {
-                if (!raw.equals(warnedMode)) {
-                    plugin.getLogger().warning("resource-pack.mode không hợp lệ: " + raw
-                            + ". Dùng chế độ none.");
-                    warnedMode = raw;
-                }
-                yield Mode.NONE;
-            }
-        };
-    }
-
-    public boolean usesCustomFont(Player player) {
-        String mode = plugin.getConfig().getString("resource-pack.icon-mode", "auto");
-        if (mode == null) {
-            mode = "auto";
-        }
-        return switch (mode.trim().toLowerCase(Locale.ROOT)) {
-            case "force" -> true;
-            case "unicode" -> false;
-            case "auto" -> hasIconPack(player);
-            default -> {
-                if (!mode.equals(warnedIconMode)) {
-                    plugin.getLogger().warning("resource-pack.icon-mode không hợp lệ: " + mode
-                            + ". Dùng chế độ auto.");
-                    warnedIconMode = mode;
-                }
-                yield hasIconPack(player);
-            }
-        };
-    }
-
-    private boolean hasIconPack(Player player) {
-        Set<UUID> loaded = loadedPacks.get(player.getUniqueId());
-        if (loaded == null || loaded.isEmpty()) {
+    public boolean hasIconPack(Player player) {
+        String host = activeHost();
+        if (host == null) {
             return false;
         }
-        return switch (mode()) {
-            case SELF -> loaded.contains(PACK_ID);
-            case EXTERNAL -> true;
-            case NONE -> false;
-        };
-    }
-
-    public void sendToOnlinePlayers() {
-        Bukkit.getOnlinePlayers().forEach(this::sendTo);
+        Map<String, Set<UUID>> packsByHost = loadedPacks.get(player.getUniqueId());
+        Set<UUID> packs = packsByHost == null ? null : packsByHost.get(host);
+        return packs != null && !packs.isEmpty();
     }
 
     public void reload() {
-        hashPrepared = false;
-        packHash = null;
-        warnedMissingUrl = false;
-        sendToOnlinePlayers();
+        warnedMissingHost = false;
+        warnedInvalidHost = null;
+        warnedLegacyMode = false;
+        warnAboutLegacyMode();
+        activeHost();
     }
 
     public void shutdown() {
-        loadedPacks.clear();
-        requestedPacks.clear();
-    }
-
-    @EventHandler
-    public void onPlayerJoin(PlayerJoinEvent event) {
-        sendTo(event.getPlayer());
-    }
-
-    @EventHandler
-    public void onPlayerQuit(PlayerQuitEvent event) {
-        UUID playerId = event.getPlayer().getUniqueId();
-        requestedPacks.remove(playerId);
-        if (!plugin.isEnabled()) {
-            loadedPacks.remove(playerId);
-            return;
-        }
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            if (Bukkit.getPlayer(playerId) == null) {
-                loadedPacks.remove(playerId);
-            }
-        }, QUIT_CLEANUP_TICKS);
+        saveKnownPacks();
     }
 
     @EventHandler
     public void onResourcePackStatus(PlayerResourcePackStatusEvent event) {
         UUID playerId = event.getPlayer().getUniqueId();
         UUID packId = event.getID();
+        if (packId == null) {
+            return;
+        }
         switch (event.getStatus()) {
-            case SUCCESSFULLY_LOADED ->
-                    loadedPacks.computeIfAbsent(playerId, ignored -> new HashSet<>()).add(packId);
+            case SUCCESSFULLY_LOADED -> {
+                String host = activeHost();
+                if (host == null) {
+                    return;
+                }
+                boolean changed = loadedPacks
+                        .computeIfAbsent(playerId, ignored -> new HashMap<>())
+                        .computeIfAbsent(host, ignored -> new HashSet<>())
+                        .add(packId);
+                if (changed) {
+                    saveKnownPacks();
+                }
+            }
             case DECLINED, FAILED_DOWNLOAD, FAILED_RELOAD, INVALID_URL, DISCARDED -> {
-                Set<UUID> loaded = loadedPacks.get(playerId);
-                if (loaded != null) {
-                    loaded.remove(packId);
-                    if (loaded.isEmpty()) {
-                        loadedPacks.remove(playerId);
-                    }
+                if (removePack(playerId, packId)) {
+                    saveKnownPacks();
                 }
             }
             default -> {
@@ -160,129 +96,152 @@ public final class ResourcePackService implements Listener {
         }
     }
 
-    private void sendTo(Player player) {
-        if (mode() != Mode.SELF) {
-            removePackIfRequested(player);
-            return;
-        }
-
-        String url = configuredUrl();
-        UUID playerId = player.getUniqueId();
-        if (url == null) {
-            removePackIfRequested(player);
-            return;
-        }
-        byte[] hash = packHash();
-        if (hash == null) {
-            return;
-        }
-        String requestKey = url + "#" + hex(hash);
-        if (requestKey.equals(requestedPacks.get(playerId))) {
-            return;
-        }
-
-        String prompt = plugin.getConfig().getString(
-                "resource-pack.prompt", "Tải resource pack HoloWaypoint để hiển thị icon waypoint.");
-        if (prompt == null || prompt.isBlank()) {
-            prompt = "Tải resource pack HoloWaypoint để hiển thị icon waypoint.";
-        }
-        boolean required = plugin.getConfig().getBoolean("resource-pack.required", false);
-        Set<UUID> loaded = loadedPacks.get(playerId);
-        if (loaded != null) {
-            loaded.remove(PACK_ID);
-        }
-        try {
-            player.setResourcePack(PACK_ID, url, hash.clone(), Component.text(prompt), required);
-            requestedPacks.put(playerId, requestKey);
-        } catch (IllegalArgumentException exception) {
-            plugin.getLogger().warning("Không thể gửi resource pack cho " + player.getName()
-                    + ": " + exception.getMessage());
-        }
-    }
-
-    private String configuredUrl() {
-        String url = plugin.getConfig().getString("resource-pack.url", "");
-        if (url == null || url.isBlank()) {
-            if (!warnedMissingUrl) {
-                plugin.getLogger().warning("resource-pack.mode đang là self nhưng chưa có URL công khai trong "
-                        + "resource-pack.url; tiếp tục dùng icon Unicode.");
-                warnedMissingUrl = true;
-            }
-            return null;
-        }
-
-        try {
-            URI uri = URI.create(url.trim());
-            String scheme = uri.getScheme();
-            if (uri.getHost() == null || scheme == null
-                    || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
-                throw new IllegalArgumentException("cần URL HTTP(S) công khai");
-            }
-            return uri.toString();
-        } catch (IllegalArgumentException exception) {
-            if (!url.equals(warnedInvalidUrl)) {
-                plugin.getLogger().warning("resource-pack.url không hợp lệ: " + exception.getMessage());
-                warnedInvalidUrl = url;
-            }
-            return null;
-        }
-    }
-
-    /** Chỉ chuẩn bị resourcepack.zip khi thật sự cần (chế độ self). */
-    private byte[] packHash() {
-        if (hashPrepared) {
-            return packHash;
-        }
-        hashPrepared = true;
-        try {
-            File packFile = new File(plugin.getDataFolder(), "resourcepack.zip");
-            if (!packFile.isFile() && plugin.getResource("resourcepack.zip") != null) {
-                plugin.saveResource("resourcepack.zip", false);
-            }
-            if (!packFile.isFile()) {
-                plugin.getLogger().severe("Không tìm thấy " + packFile.getPath()
-                        + ". Hãy đặt resourcepack.zip vào đó, hoặc dùng resource-pack.mode: external.");
-                return null;
-            }
-            packHash = sha1(packFile);
-        } catch (IOException | IllegalArgumentException exception) {
-            plugin.getLogger().severe("Không thể chuẩn bị resourcepack.zip: " + exception.getMessage());
-        }
-        return packHash;
-    }
-
-    private void removePackIfRequested(Player player) {
-        UUID playerId = player.getUniqueId();
-        if (requestedPacks.remove(playerId) != null) {
-            Set<UUID> loaded = loadedPacks.get(playerId);
-            if (loaded != null) {
-                loaded.remove(PACK_ID);
-            }
-            player.removeResourcePack(PACK_ID);
-        }
-    }
-
-    private static String hex(byte[] bytes) {
-        StringBuilder builder = new StringBuilder(bytes.length * 2);
-        for (byte value : bytes) {
-            builder.append(String.format(Locale.ROOT, "%02x", value));
-        }
-        return builder.toString();
-    }
-
-    private static byte[] sha1(File file) throws IOException {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-1");
-            try (FileInputStream input = new FileInputStream(file)) {
-                byte[] buffer = new byte[8192];
-                int read;
-                while ((read = input.read(buffer)) != -1) {
-                    digest.update(buffer, 0, read);
+    private String activeHost() {
+        String configured = plugin.getConfig().getString("resource-pack.host", "auto");
+        if (configured == null || configured.isBlank()
+                || configured.trim().equalsIgnoreCase("auto")) {
+            for (HostProvider provider : HOST_PROVIDERS) {
+                if (plugin.getServer().getPluginManager().isPluginEnabled(provider.pluginName())) {
+                    warnedMissingHost = false;
+                    return provider.key();
                 }
             }
-            return digest.digest();
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-1 is unavailable", exception);
+            if (!warnedMissingHost) {
+                plugin.getLogger().warning("Không tìm thấy host resource pack được hỗ trợ. "
+                        + "Cài Nexo, ItemsAdder hoặc Oraxen, hoặc đặt resource-pack.host phù hợp.");
+                warnedMissingHost = true;
+            }
+            return null;
+        }
+
+        String normalized = configured.trim().toLowerCase(Locale.ROOT);
+        if (normalized.equals("itemadder")) {
+            normalized = "itemsadder";
+        }
+        HostProvider provider = findProvider(normalized);
+        if (provider == null) {
+            if (!configured.equals(warnedInvalidHost)) {
+                plugin.getLogger().warning("resource-pack.host không hợp lệ: " + configured
+                        + ". Chỉ hỗ trợ auto, nexo, itemsadder hoặc oraxen.");
+                warnedInvalidHost = configured;
+            }
+            return null;
+        }
+        if (!plugin.getServer().getPluginManager().isPluginEnabled(provider.pluginName())) {
+            if (!warnedMissingHost) {
+                plugin.getLogger().warning("Host resource pack " + provider.pluginName()
+                        + " chưa được cài hoặc đang tắt.");
+                warnedMissingHost = true;
+            }
+            return null;
+        }
+        warnedMissingHost = false;
+        return provider.key();
+    }
+
+    private void warnAboutLegacyMode() {
+        String legacyMode = plugin.getConfig().getString("resource-pack.mode");
+        if (legacyMode != null && !legacyMode.equalsIgnoreCase("external") && !warnedLegacyMode) {
+            plugin.getLogger().warning("resource-pack.mode: " + legacyMode
+                    + " đã bị bỏ. HoloWaypoint chỉ theo dõi pack host bởi Nexo, ItemsAdder hoặc Oraxen; "
+                    + "hãy dùng resource-pack.host.");
+            warnedLegacyMode = true;
         }
     }
+
+    private boolean removePack(UUID playerId, UUID packId) {
+        Map<String, Set<UUID>> packsByHost = loadedPacks.get(playerId);
+        if (packsByHost == null) {
+            return false;
+        }
+        boolean changed = false;
+        for (Set<UUID> packs : packsByHost.values()) {
+            changed |= packs.remove(packId);
+        }
+        packsByHost.values().removeIf(Set::isEmpty);
+        if (packsByHost.isEmpty()) {
+            loadedPacks.remove(playerId);
+        }
+        return changed;
+    }
+
+    private void loadKnownPacks() {
+        if (!knownPacksFile.isFile()) {
+            return;
+        }
+        FileConfiguration saved = YamlConfiguration.loadConfiguration(knownPacksFile);
+        ConfigurationSection players = saved.getConfigurationSection("players");
+        if (players == null) {
+            return;
+        }
+
+        for (String playerKey : players.getKeys(false)) {
+            UUID playerId;
+            try {
+                playerId = UUID.fromString(playerKey);
+            } catch (IllegalArgumentException exception) {
+                plugin.getLogger().warning("UUID người chơi không hợp lệ trong resource-packs.yml: "
+                        + playerKey);
+                continue;
+            }
+            ConfigurationSection playerSection = players.getConfigurationSection(playerKey);
+            if (playerSection == null) {
+                continue;
+            }
+            for (String hostKey : playerSection.getKeys(false)) {
+                HostProvider provider = findProvider(hostKey.toLowerCase(Locale.ROOT));
+                if (provider == null) {
+                    continue;
+                }
+                Set<UUID> packs = new HashSet<>();
+                for (String packKey : playerSection.getStringList(hostKey)) {
+                    try {
+                        packs.add(UUID.fromString(packKey));
+                    } catch (IllegalArgumentException exception) {
+                        plugin.getLogger().warning("UUID resource pack không hợp lệ trong "
+                                + "resource-packs.yml: " + packKey);
+                    }
+                }
+                if (!packs.isEmpty()) {
+                    loadedPacks.computeIfAbsent(playerId, ignored -> new HashMap<>())
+                            .put(provider.key(), packs);
+                }
+            }
+        }
+    }
+
+    private void saveKnownPacks() {
+        YamlConfiguration saved = new YamlConfiguration();
+        for (Map.Entry<UUID, Map<String, Set<UUID>>> playerEntry : loadedPacks.entrySet()) {
+            for (Map.Entry<String, Set<UUID>> hostEntry : playerEntry.getValue().entrySet()) {
+                List<String> packIds = new ArrayList<>();
+                hostEntry.getValue().stream()
+                        .map(UUID::toString)
+                        .sorted()
+                        .forEach(packIds::add);
+                saved.set("players." + playerEntry.getKey() + "." + hostEntry.getKey(), packIds);
+            }
+        }
+        try {
+            File parent = knownPacksFile.getParentFile();
+            if (parent != null && !parent.exists() && !parent.mkdirs()) {
+                throw new IOException("Không thể tạo thư mục " + parent.getPath());
+            }
+            saved.save(knownPacksFile);
+        } catch (IOException exception) {
+            plugin.getLogger().warning("Không thể lưu trạng thái resource pack: "
+                    + exception.getMessage());
+        }
+    }
+
+    private static HostProvider findProvider(String key) {
+        for (HostProvider provider : HOST_PROVIDERS) {
+            if (provider.key().equals(key)) {
+                return provider;
+            }
+        }
+        return null;
+    }
+
+    private record HostProvider(String key, String pluginName) {}
 }

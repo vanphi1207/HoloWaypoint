@@ -15,6 +15,6 @@ public final class PlayerQuitListener implements Listener {
 
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent event) {
-        manager.clearPlayer(event.getPlayer().getUniqueId());
+        manager.onPlayerQuit(event.getPlayer().getUniqueId());
     }
 }

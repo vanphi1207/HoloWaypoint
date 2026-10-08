@@ -29,7 +29,6 @@ public final class HoloWaypointPlugin extends JavaPlugin {
         command.setExecutor(handler);
         command.setTabCompleter(handler);
         getServer().getPluginManager().registerEvents(new PlayerQuitListener(manager), this);
-        resourcePackService.sendToOnlinePlayers();
     }
 
     @Override

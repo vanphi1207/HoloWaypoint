@@ -2,6 +2,7 @@ package dev.para.holowaypoint.tracking;
 
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.key.Key;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -15,13 +16,11 @@ import org.joml.Vector3f;
 
 public final class TrackedMarker {
 
-    private static final String[] FALLBACK_ARROWS = {"↑", "↗", "→", "↘", "↓", "↙", "←", "↖"};
     private static final Key ICON_FONT = Key.key("holowaypoint", "icons");
     private static final int WAYPOINT_GLYPH = 0xE000;
     private static final int EDGE_GLYPH_START = 0xE100;
     private static final int EDGE_GLYPH_COUNT = 16;
     private static final int MAX_DISPLAY_DURATION = 59;
-    // Bỏ qua dự đoán khi camera "nhảy" (teleport, dash...) để marker không bị văng.
     private static final double MAX_PREDICT_MOVE_SQUARED = 16.0;
     private static final float MAX_PREDICT_ROTATION_DEGREES = 60.0f;
 
@@ -34,7 +33,6 @@ public final class TrackedMarker {
     private boolean hasEdgePosition;
     private int appliedInterpolation;
 
-    // Trạng thái camera ở lần cập nhật trước, dùng để dự đoán camera ở tick kế tiếp.
     private World lastEyeWorld;
     private double lastEyeX;
     private double lastEyeY;
@@ -47,14 +45,6 @@ public final class TrackedMarker {
         return display != null && display.isValid();
     }
 
-    /**
-     * Ngoại suy camera về phía trước theo vận tốc của lần cập nhật trước.
-     *
-     * <p>Marker ở rìa màn hình được đặt ngay trước camera, nhưng server chỉ biết hướng nhìn của
-     * tick trước nên marker luôn chậm hơn camera một nhịp. Dự đoán này bù lại độ trễ đó.
-     *
-     * @param steps số lần cập nhật cần dự đoán trước (0 = tắt)
-     */
     public Location predictEye(Location eye, double steps) {
         Location predicted = eye.clone();
         World world = eye.getWorld();
@@ -129,11 +119,9 @@ public final class TrackedMarker {
             textDisplay.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
             textDisplay.setBrightness(new Display.Brightness(15, 15));
             textDisplay.setTransformation(scaleOf(scale));
-            // Client tự nội suy vị trí giữa hai lần teleport thay vì nhảy cóc theo tick.
             textDisplay.setTeleportDuration(duration);
             textDisplay.text(text);
         });
-        // Duration của transformation chỉ bật từ lần cập nhật sau, tránh hiệu ứng phóng to lúc vừa spawn.
         appliedInterpolation = 0;
         lastText = text;
         lastScale = scale;
@@ -163,7 +151,6 @@ public final class TrackedMarker {
                 appliedInterpolation = duration;
             }
             display.setTransformation(scaleOf(scale));
-            // Đổi start tick để client bắt đầu nội suy scale ngay lập tức.
             display.setInterpolationDelay(0);
             lastScale = scale;
         }
@@ -179,22 +166,15 @@ public final class TrackedMarker {
         lastEyeWorld = null;
     }
 
-    public static Component label(double distance, int arrow, boolean useCustomFont) {
+    public static Component label(double distance, int arrow) {
         String distanceText = distance >= 1000
                 ? String.format(java.util.Locale.ROOT, "%.1fkm", distance / 1000.0)
                 : Math.round(distance) + "m";
-        Component icon;
-        if (useCustomFont) {
-            int glyph = arrow >= 0
-                    ? EDGE_GLYPH_START + Math.floorMod(arrow, EDGE_GLYPH_COUNT)
-                    : WAYPOINT_GLYPH;
-            icon = Component.text(Character.toString((char) glyph)).font(ICON_FONT);
-        } else {
-            String symbol = arrow >= 0
-                    ? FALLBACK_ARROWS[Math.floorMod((int) Math.round(arrow / 2.0), FALLBACK_ARROWS.length)]
-                    : "◆";
-            icon = Component.text(symbol);
-        }
+        int glyph = arrow >= 0
+                ? EDGE_GLYPH_START + Math.floorMod(arrow, EDGE_GLYPH_COUNT)
+                : WAYPOINT_GLYPH;
+        Component icon = Component.text(Character.toString((char) glyph), NamedTextColor.WHITE)
+                .font(ICON_FONT);
         return Component.empty()
                 .append(icon)
                 .appendNewline()

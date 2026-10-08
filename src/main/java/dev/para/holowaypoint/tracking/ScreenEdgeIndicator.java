@@ -41,15 +41,9 @@ public final class ScreenEdgeIndicator {
             }
         } else {
             double horizontal = toTarget.dot(right);
-            double vertical = toTarget.dot(up);
-            double length = Math.hypot(horizontal, vertical);
-            if (length < 1.0e-6) {
-                screenX = 0.0;
-                screenY = -1000.0;
-            } else {
-                screenX = horizontal / length * 1000.0;
-                screenY = vertical / length * 1000.0;
-            }
+            double behindDepth = Math.max(-forwardDistance, BEHIND_EPSILON);
+            screenX = clamp(horizontal / behindDepth, -width, width);
+            screenY = -height;
             angle = Math.atan2(screenX, screenY);
             offScreen = true;
         }
@@ -121,8 +115,6 @@ public final class ScreenEdgeIndicator {
     }
 
     private static Vector rightVector(Vector forward) {
-        // Minecraft: +X đông, +Z nam. Nhìn về +Z thì bên phải người chơi là -X,
-        // nên "phải" = forward x up (up x forward sẽ ra bên TRÁI, làm marker bị lật gương).
         Vector right = forward.clone().crossProduct(new Vector(0.0, 1.0, 0.0));
         if (right.lengthSquared() < VECTOR_EPSILON_SQUARED) {
             right = new Vector(-1.0, 0.0, 0.0);

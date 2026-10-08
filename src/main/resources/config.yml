@@ -15,7 +15,7 @@ update-interval-ticks: 1
 # Number of ticks the client uses to glide a marker (position and scale) between
 # two updates instead of snapping. 0 = automatic (matches update-interval-ticks),
 # max 59. Raise to 2-3 for extra smoothness at the cost of a little latency.
-interpolation-ticks: 0
+interpolation-ticks: 3
 
 # --- Screen-edge indicator -------------------------------------------------
 # When the target is off-screen the marker is pinned to the screen border and
@@ -41,33 +41,22 @@ edge-lookahead-ticks: 1.0
 edge-half-width: 1.0
 edge-half-height: 0.55
 
+# Keep edge markers and the target marker's text inside this fraction of the
+# configured screen rectangle. Lower this if markers still touch the screen edge.
+edge-safe-area: 0.82
+
 # Marker size while on the edge.
 edge-scale: 0.7
 
 # Draw a directional arrow while the marker is on the edge.
-# Uses Unicode characters and does not require a resource pack.
+# The selected external resource pack must include HoloWaypoint's edge glyphs.
 edge-arrow: true
 
 # --- Resource pack -----------------------------------------------------------
-# The icon font (holowaypoint:icons) lives in the HoloWaypoint resource pack.
+# HoloWaypoint does not host or send resource packs. Merge its icon font into a
+# pack hosted by Nexo, ItemsAdder, or Oraxen.
+# The font key is holowaypoint:icons, with U+E000 for waypoint and U+E100-U+E10F
+# for edge directions; the older source refers to assets/holowaypoint/font/icons.json.
 resource-pack:
-  # none     : do not send any pack, markers use Unicode icons.
-  # self     : this plugin sends plugins/HoloWaypoint/resourcepack.zip itself.
-  #            Requires a public HTTP(S) `url` that hosts the same zip.
-  # external : another plugin (Nexo, ItemsAdder, Oraxen...) hosts and sends the pack.
-  #            Copy the pack into that plugin (for Nexo: put the zip or the folder into
-  #            plugins/Nexo/pack/external_packs/, then run /nexo reload all).
-  #            HoloWaypoint sends nothing; it only watches which packs a player loaded.
-  mode: external
-
-  # auto    : use the icon font once the player loaded a pack (see mode above),
-  #           otherwise fall back to Unicode.
-  # force   : always use the icon font (use this if auto cannot tell, e.g. the pack
-  #           is sent by a proxy or another server in the network).
-  # unicode : never use the icon font.
-  icon-mode: auto
-
-  # Only used by mode: self.
-  url: ""
-  required: false
-  prompt: "Tải resource pack HoloWaypoint để hiển thị icon waypoint."
+  # auto, nexo, itemsadder, oraxen. Auto uses the first enabled supported host.
+  host: auto

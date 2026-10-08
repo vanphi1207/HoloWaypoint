@@ -21,11 +21,12 @@ public final class WaypointManager {
         this.plugin = plugin;
         this.resourcePackService = resourcePackService;
         this.repository = new WaypointRepository(plugin);
-        this.tracker = new WaypointTracker(plugin, repository, resourcePackService);
+        this.tracker = new WaypointTracker(plugin, repository);
     }
 
     public void load() {
         repository.load();
+        tracker.load();
     }
 
     public void start() {
@@ -47,7 +48,6 @@ public final class WaypointManager {
         return repository.put(waypoint);
     }
 
-    /** Tạo mới hoặc đổi vị trí; waypoint đã tồn tại thì giữ nguyên cài đặt message. */
     public boolean putLocation(String name, String world, double x, double y, double z) {
         Waypoint existing = repository.get(name);
         Waypoint updated = existing == null
@@ -113,5 +113,9 @@ public final class WaypointManager {
 
     public void clearPlayer(UUID playerId) {
         tracker.clearPlayer(playerId);
+    }
+
+    public void onPlayerQuit(UUID playerId) {
+        tracker.onPlayerQuit(playerId);
     }
 }
